@@ -35,9 +35,36 @@ Notes:
 
 Server load result:
 
-- Model loading: 51.08 GiB, ~34s
+- Model loading: 51.08 GiB, 37.83s
 - KV cache memory: 29.47 GiB
 - GPU KV cache size: 359,862 tokens (max concurrency for 8k ctx ≈ 43.93x)
+
+## Cold Start Breakdown
+
+The successful server start in `vllm.log` went from API server launch at
+15:14:11 to serving requests at 15:15:33, so the full cold start was about
+82 seconds.
+
+| Stage | Time window | Duration | Notes |
+|---|---:|---:|---|
+| API server process to EngineCore start | 15:14:11 → 15:14:19 | ~8s | Python imports, argument parsing, EngineCore subprocess launch |
+| EngineCore setup before model load | 15:14:19 → 15:14:23 | ~4s | NCCL, parallel state, attention backend, FlashAttention setup |
+| Weight load to GPU | 15:14:23 → 15:15:01 | ~38s | `Loading weights took 37.47 seconds`; `Model loading took 51.08 GiB memory and 37.83 seconds` |
+| `torch.compile` cache load and KV planning | 15:15:02 → 15:15:12 | ~10s | AOT compile cache hit; `torch.compile took 3.50 s in total`; KV cache capacity decided |
+| CUDA graph capture and warmup | 15:15:12 → 15:15:33 | ~21s | CUDA graph capture, multimodal warmup, route registration |
+
+Key takeaways:
+
+- The dominant cost is moving 51 GiB of weights into GPU memory:
+  51.08 GiB / 37.83s ≈ 1.35 GiB/s.
+- The checkpoint is larger than available host RAM (51.75 GiB vs 18.68 GiB),
+  so vLLM disabled auto-prefetch and loaded more conservatively.
+- `torch.compile` was not the bottleneck on this run because vLLM loaded the
+  cached AOT graph from `~/.cache/vllm/torch_compile_cache/`.
+- CUDA graph capture still cost 7 seconds and about 0.75 GiB, but it is useful
+  for lower steady-state latency.
+- The multimodal warmup added about 9 seconds even though the benchmark was
+  text-only, because this Qwen architecture exposes multimodal paths.
 
 ## Smoke Test
 
