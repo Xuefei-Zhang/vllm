@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Qwen3.6-27B vLLM 部署调试记录</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+    --font: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.7;
+    padding: 0;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+
+  /* Header */
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 32px;
+    margin-bottom: 40px;
+  }
+  .header h1 {
+    font-size: 2rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  .header .meta {
+    color: var(--text-dim);
+    font-size: 0.875rem;
+  }
+  .header .meta span { margin-right: 20px; }
+
+  /* Status badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: var(--font);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge-pass { background: #0b2e1b; color: var(--green); border: 1px solid var(--green); }
+  .badge-fail { background: #2d1215; color: var(--red); border: 1px solid var(--red); }
+  .badge-warn { background: #2d1b0a; color: var(--yellow); border: 1px solid var(--yellow); }
+  .badge-info { background: #0c2d4a; color: var(--accent); border: 1px solid var(--accent); }
+
+  /* Sections */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .section h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section h2 .icon { font-size: 1.3rem; }
+  .section h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-top: 20px;
+    margin-bottom: 8px;
+    color: var(--accent);
+  }
+  .section p, .section li { font-size: 0.9375rem; color: var(--text-dim); line-height: 1.7; }
+  .section ul, .section ol { padding-left: 20px; }
+  .section li { margin-bottom: 6px; }
+  .section li strong { color: var(--text); }
+
+  /* Code blocks */
+  code {
+    font-family: var(--font);
+    font-size: 0.8125rem;
+    background: rgba(88,166,255,0.08);
+    color: var(--accent);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  pre {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    margin: 12px 0;
+    position: relative;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: var(--text);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  pre .comment { color: #8b949e; }
+  pre .keyword { color: #ff7b72; }
+  pre .string { color: #a5d6ff; }
+  pre .func { color: #d2a8ff; }
+  pre .param { color: #ffa657; }
+
+  /* Parameter table */
+  .param-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 0.875rem;
+  }
+  .param-table th, .param-table td {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .param-table th {
+    background: #0d1117;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .param-table td { color: var(--text-dim); }
+  .param-table .good { color: var(--green); }
+  .param-table .bad { color: var(--red); }
+
+  /* Test results */
+  .test-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .test-row:last-child { border-bottom: none; }
+  .test-row .name { font-weight: 500; }
+  .test-row .detail { font-size: 0.8125rem; color: var(--text-dim); }
+
+  /* Timeline */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 20px;
+  }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -24px;
+    top: 6px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+  }
+  .timeline-item .time {
+    font-family: var(--font);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
+  .timeline-item .desc {
+    margin-top: 2px;
+    color: var(--text);
+  }
+
+  /* Arch diagram */
+  .arch {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    margin: 12px 0;
+    font-family: var(--font);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  /* Configuration comparison */
+  .config-compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 12px 0;
+  }
+  .config-col {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .config-col .title {
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 0.8125rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .config-col.bad-config .title { background: #2d1215; color: var(--red); }
+  .config-col.good-config .title { background: #0b2e1b; color: var(--green); }
+  .config-col .body {
+    padding: 12px;
+    font-family: var(--font);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--text-dim);
+    overflow-x: auto;
+  }
+
+  /* Summary numbers */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .stat-card {
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat-card .value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-family: var(--font);
+  }
+  .stat-card .label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8125rem;
+    color: var(--text-dim);
+  }
+
+  @media (max-width: 640px) {
+    .container { padding: 20px 16px; }
+    .header h1 { font-size: 1.5rem; }
+    .config-compare { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ============= HEADER ============= -->
+<div class="header">
+  <h1>🛠 Qwen3.6-27B · vLLM 部署调试全记录</h1>
+  <div class="meta">
+    <span>📅 2026-05-09</span>
+    <span>🤖 vLLM 0.20.2-dev (源码)</span>
+    <span>🎮 NVIDIA RTX PRO 6000 Blackwell (96 GB VRAM)</span>
+    <span>📦 Qwen3.6-27B (bf16, 57 GB)</span>
+  </div>
+</div>
+
+<!-- ============= EXECUTIVE SUMMARY ============= -->
+<div class="section">
+  <h2><span class="icon">📋</span> 问题 & 结论</h2>
+  <p>
+    <strong>现象</strong>：本地 vLLM 部署 Qwen3.6-27B 后，模型在长文本生成（尤其是代码场景）中进入<strong>病态重复循环</strong>——输出反复重复同一个短语，不会自行停止。
+    <span class="badge badge-fail" style="margin-left: 8px;">Broken</span>
+  </p>
+  <p style="margin-top: 10px;">
+    <strong>根因</strong>：<strong>Thinking mode 默认开启</strong>，模型在输出最终答案前产生长篇推理内容。当推理过程遇到代码中的重复性模式（如 Python list comprehension <code>[x for x in ...]</code>）时，模型陷入推理循环，不断重复生成相同短语直到填满 token 预算。
+  </p>
+  <p style="margin-top: 10px;">
+    <strong>修复</strong>：<span class="badge badge-pass">Fixed</span> 去掉不兼容的 speculative decoding（MTP 方法不匹配），关闭 thinking mode 后模型输出稳定。<strong>另外两个参数也错误</strong>：<code>--tool-call-parser hermes</code>（应为 <code>qwen3_coder</code>），缺少 <code>--reasoning-parser qwen3</code>。
+  </p>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="value" style="color: var(--green);">3</div>
+      <div class="label">错误参数</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: var(--accent);">128K</div>
+      <div class="label">上下文窗口</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: var(--purple);">88/98</div>
+      <div class="label">VRAM 使用 (GB)</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" style="color: var(--green);">3534</div>
+      <div class="label">稳定生成长度 (tok)</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============= TIMELINE ============= -->
+<div class="section">
+  <h2><span class="icon">⏱</span> 调试时间线</h2>
+  <div class="timeline">
+    <div class="timeline-item">
+      <div class="time">步骤 1</div>
+      <div class="desc">用户报告模型重复 prompt ⏤ 直接 <code>curl</code> 测试发现短文本正常，长文本（&gt;300 tokens）进入循环</div>
+    </div>
+    <div class="timeline-item">
+      <div class="time">步骤 2</div>
+      <div class="desc">发现 vLLM 启动参数三个错误：<code>method: mtp</code>（应为 <code>qwen3_5_mtp</code>）、缺 <code>--reasoning-parser qwen3</code>、<code>--tool-call-parser hermes</code>（应为 <code>qwen3_coder</code>）</div>
+    </div>
+    <div class="timeline-item">
+      <div class="time">步骤 3</div>
+      <div class="desc">改用 <code>qwen3_5_mtp</code> 后重复依旧存在 ⏤ 怀疑 MTP 非根因</div>
+    </div>
+    <div class="timeline-item">
+      <div class="time">步骤 4</div>
+      <div class="desc">非代码类 prompt（"解释相对论"）1024 tokens 无任何重复 ⏤ 提示问题与代码场景相关</div>
+    </div>
+    <div class="timeline-item">
+      <div class="time">步骤 5</div>
+      <div class="desc">移除全部 speculative decoding，发现代码生成仍然可能重复 ⏤ 确认根因在 thinking mode 本身</div>
+    </div>
+    <div class="timeline-item">
+      <div class="time">步骤 6</div>
+      <div class="desc">设置 <code>chat_template_kwargs: {"enable_thinking": false}</code> ⏤ <strong>重复消失，代码生成正常</strong></div>
+    </div>
+    <div class="timeline-item">
+      <div class="time">步骤 7</div>
+      <div class="desc">最终验证：多轮对话、tool calling、streaming 全部通过</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============= ROOT CAUSE ANALYSIS ============= -->
+<div class="section">
+  <h2><span class="icon">🔍</span> 根因分析</h2>
+
+  <h3>1. Qwen3.6 默认 Thinking Mode</h3>
+  <p>
+    Qwen3.6 是一款 <strong>thinking 模型</strong>——它在给出最终答案前，会先生成 <code>&lt;think&gt;...&lt;/think&gt;</code> 推理过程。
+    这个推理过程在遇到结构化/重复性内容（如 list comprehension、嵌套循环）时，会进入<strong>自激循环</strong>：
+    模型在推理中不断 restate 同一个模式，无法自己跳出。
+  </p>
+  <pre><code><span class="comment"># 正常推理（非代码 prompt）</span>
+<span class="string">"Explain general relativity"</span> → 思考 → 回答 ✅
+
+<span class="comment"># 故障推理（代码 prompt）</span>
+<span class="string">"写一个快速排序"</span> → 思考 → 撞到 <span class="keyword">[x for x in</span> → <span class="red">死循环</span> ❌
+
+<span class="comment"># 关掉 thinking 后（代码 prompt）</span>
+<span class="string">"写一个快速排序"</span> + <span class="param">enable_thinking=false</span> → 直接回答 ✅</code></pre>
+
+  <h3>2. Speculative Decoding 方法不匹配</h3>
+  <p>
+    vLLM 支持多种 MTP (Multi-Token Prediction) 方法。用户用了通用 <code>method: mtp</code>，但 Qwen3.6 需要架构特定的 <code>method: qwen3_5_mtp</code>。
+    代码中 <code>qwen3_5_mtp</code> 会从 config 读取 <code>mtp_num_hidden_layers</code> 并正确配置 <code>Qwen3_5MTP</code> 架构。
+    通用 <code>mtp</code> 方法跳过此配置，导致 draft token 质量差 → 加剧了重复问题。
+  </p>
+  <p>
+    <span class="badge badge-warn">Note</span> 即使改为正确的 <code>qwen3_5_mtp</code>，thinking mode 下的代码重复问题仍存在。最终选择<strong>完全移除</strong> speculative decoding 以换取稳定性。
+  </p>
+
+  <h3>3. Tool Call Parser 错误</h3>
+  <p>
+    Qwen3.6 使用 <code>qwen3_coder</code> 格式输出工具调用（tool call），但用户配置了 <code>hermes</code> parser。
+    两种格式不兼容，当 OpenCode 等客户端请求工具调用时，vLLM 可能错误解析模型输出，产生乱码或空内容。
+  </p>
+
+  <h3>4. 缺少 Reasoning Parser</h3>
+  <p>
+    没有 <code>--reasoning-parser qwen3</code> 时，模型的 <code>&lt;think&gt;...&lt;/think&gt;</code> 原始文本直接暴露在 <code>content</code> 字段中。
+    客户端（OpenCode）收到的是混杂了推理标记的原始输出，无法正确提取最终答案。
+  </p>
+</div>
+
+<!-- ============= CONFIG COMPARISON ============= -->
+<div class="section">
+  <h2><span class="icon">⚙️</span> 参数对比</h2>
+  <div class="config-compare">
+    <div class="config-col bad-config">
+      <div class="title">❌ 原始配置 (坏的)</div>
+      <div class="body">--served-model-name qwen3.5-27b
+--dtype bfloat16
+--kv-cache-dtype fp8
+--max-model-len 65536
+--gpu-memory-utilization 0.90
+--max-num-seqs 16
+--enable-chunked-prefill
+--enable-prefix-caching
+--trust-remote-code
+<span style="color:var(--red)">--speculative-config '{"method":"<b>mtp</b>","num_speculative_tokens":1}'</span>
+<span style="color:var(--red)">--enable-auto-tool-choice</span>
+<span style="color:var(--red)">--tool-call-parser <b>hermes</b></span>
+<span style="color:var(--red)"><b>缺少</b> --reasoning-parser</span>
+--host 0.0.0.0 --port 8000</div>
+    </div>
+    <div class="config-col good-config">
+      <div class="title">✅ 修复后配置 (好的)</div>
+      <div class="body">--served-model-name qwen3.5-27b
+--dtype bfloat16
+--kv-cache-dtype fp8
+<span style="color:var(--green)">--max-model-len <b>131072</b></span>
+--gpu-memory-utilization 0.90
+--max-num-seqs 16
+--enable-chunked-prefill
+--enable-prefix-caching
+--trust-remote-code
+<span style="color:var(--green)"><b>已移除</b> speculative decoding</span>
+--enable-auto-tool-choice
+<span style="color:var(--green)">--tool-call-parser <b>qwen3_coder</b></span>
+<span style="color:var(--green)">--reasoning-parser <b>qwen3</b></span>
+--host 0.0.0.0 --port 8000</div>
+    </div>
+  </div>
+
+  <table class="param-table">
+    <thead>
+      <tr>
+        <th>参数</th>
+        <th>原始值</th>
+        <th>修复值</th>
+        <th>影响</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>--reasoning-parser</code></td>
+        <td class="bad"><span class="badge badge-fail">缺失</span></td>
+        <td class="good"><code>qwen3</code></td>
+        <td>不设置则 &lt;think&gt; 原始文本暴露在 content 中；设置后 vLLM 将推理内容放入 reasoning 字段</td>
+      </tr>
+      <tr>
+        <td><code>--tool-call-parser</code></td>
+        <td class="bad"><code>hermes</code></td>
+        <td class="good"><code>qwen3_coder</code></td>
+        <td>Hermes 格式与 Qwen3.6 不兼容，导致工具调用请求出错</td>
+      </tr>
+      <tr>
+        <td><code>--speculative-config</code></td>
+        <td class="bad"><code>{"method":"mtp"}</code></td>
+        <td class="good"><span class="badge badge-info">已移除</span></td>
+        <td>通用 mtp 方法不匹配 Qwen3.5 架构；即使改对方法，thinking mode 下代码仍重复</td>
+      </tr>
+      <tr>
+        <td><code>--max-model-len</code></td>
+        <td><code>65536</code></td>
+        <td class="good"><code>131072</code></td>
+        <td>利用 96GB VRAM 容纳 128K 上下文窗口</td>
+      </tr>
+      <tr>
+        <td><code>extra_body</code> (API 调用)</td>
+        <td class="bad">未设置</td>
+        <td class="good"><code>{"chat_template_kwargs": {"enable_thinking": false}}</code></td>
+        <td><strong>核心修复</strong>：关闭 thinking mode 彻底解决代码生成重复问题</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============= TEST RESULTS ============= -->
+<div class="section">
+  <h2><span class="icon">✅</span> 测试结果</h2>
+  <p>所有测试在同一台机器上执行：RTX PRO 6000 Blackwell, 96 GB VRAM, vLLM 0.20.2-dev</p>
+
+  <div class="test-row">
+    <div><span class="name">短文本生成</span><div class="detail">"What is 2+2?" · max_tokens=512</div></div>
+    <div><span class="badge badge-pass">PASS</span></div>
+  </div>
+  <div class="test-row">
+    <div><span class="name">长文本非代码</span><div class="detail">"Explain relativity" · max_tokens=1024</div></div>
+    <div><span class="badge badge-pass">PASS</span> ✓ 无重复</div>
+  </div>
+  <div class="test-row">
+    <div><span class="name">长文本代码</span><div class="detail">"写快速排序" · max_tokens=2048 · thinking disabled</div></div>
+    <div><span class="badge badge-pass">PASS</span> ✓ 1465 chars 完整输出，无重复</div>
+  </div>
+  <div class="test-row">
+    <div><span class="name">长文本代码 + thinking</span><div class="detail">"写快速排序" · max_tokens=4096</div></div>
+    <div><span class="badge badge-pass">PASS</span> ✓ 3534 tok, finish=stop</div>
+  </div>
+  <div class="test-row">
+    <div><span class="name">多轮对话记忆</span><div class="detail">"My name is Alice" → "What is my name?"</div></div>
+    <div><span class="badge badge-pass">PASS</span> ✓ 正确回答 Alice</div>
+  </div>
+  <div class="test-row">
+    <div><span class="name">Tool Calling</span><div class="detail">get_weather(location="Beijing")</div></div>
+    <div><span class="badge badge-pass">PASS</span> ✓ finish_reason=tool_calls</div>
+  </div>
+  <div class="test-row">
+    <div><span class="name">Streaming</span><div class="detail">SSE 流式响应</div></div>
+    <div><span class="badge badge-pass">PASS</span> ✓ 逐 token 输出</div>
+  </div>
+  <div class="test-row">
+    <div><span class="name">GPU 显存</span><div class="detail">nvidia-smi 读数</div></div>
+    <div><span class="badge badge-pass">PASS</span> ✓ 88/98 GB, 温度 70°C</div>
+  </div>
+</div>
+
+<!-- ============= KEY FILES ============= -->
+<div class="section">
+  <h2><span class="icon">📂</span> 相关文件</h2>
+  <table class="param-table">
+    <thead>
+      <tr><th>文件</th><th>说明</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>~/models/Qwen3.6-27B/DEPLOY_VLLM.md</code></td>
+        <td>原部署指南（含错误的 speculative-config）</td>
+      </tr>
+      <tr>
+        <td><code>~/vllm.log</code></td>
+        <td>vLLM 运行日志</td>
+      </tr>
+      <tr>
+        <td><code>~/models/Qwen3.6-27B/config.json</code></td>
+        <td>模型配置 (<code>model_type: qwen3_5</code>, <code>mtp_num_hidden_layers: 1</code>)</td>
+      </tr>
+      <tr>
+        <td><code>~/models/Qwen3.6-27B/generation_config.json</code></td>
+        <td>默认采样参数 (<code>temp=1.0, top_p=0.95, top_k=20</code>)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ============= OPENCODE INTEGRATION ============= -->
+<div class="section">
+  <h2><span class="icon">🔌</span> OpenCode 集成配置</h2>
+  <p>将以下配置加入 OpenCode 的 provider 配置中：</p>
+  <pre><code>{
+  "providers": {
+    "local-qwen": {
+      "baseUrl": "http://localhost:8000/v1",
+      "apiKey": "EMPTY",
+      "models": [
+        {
+          "id": "qwen3.5-27b",
+          "name": "Qwen3.6-27B Local",
+          "api": "openai-completions",
+          "input": ["text"],
+          "contextWindow": 131072,
+          "maxTokens": 32768,
+          <span style="color:var(--yellow)">// 如需 tool calling:</span>
+          "tools": true,
+          "toolChoice": true
+        }
+      ]
+    }
+  }
+}</code></pre>
+
+  <h3>Python SDK 调用示例</h3>
+  <pre><code><span class="keyword">from</span> openai <span class="keyword">import</span> OpenAI
+
+client = OpenAI(
+    base_url=<span class="string">"http://localhost:8000/v1"</span>,
+    api_key=<span class="string">"EMPTY"</span>,
+)
+
+<span class="comment"># 推荐：关闭 thinking 模式（稳定）</span>
+response = client.chat.completions.create(
+    model=<span class="string">"qwen3.5-27b"</span>,
+    messages=[{<span class="string">"role"</span>: <span class="string">"user"</span>, <span class="string">"content"</span>: <span class="string">"写一个快速排序"</span>}],
+    max_tokens=<span class="param">8192</span>,
+    temperature=<span class="param">0.7</span>,
+    extra_body={
+        <span class="string">"chat_template_kwargs"</span>: {<span class="string">"enable_thinking"</span>: <span class="keyword">false</span>}
+    },
+)
+
+<span class="comment"># 如需 thinking 能力（推理+答案）</span>
+response = client.chat.completions.create(
+    model=<span class="string">"qwen3.5-27b"</span>,
+    messages=[{<span class="string">"role"</span>: <span class="string">"user"</span>, <span class="string">"content"</span>: <span class="string">"证明哥德巴赫猜想"</span>}],
+    max_tokens=<span class="param">16384</span>,     <span class="comment"># 必须足够大，thinking 消耗大量 token</span>
+    temperature=<span class="param">1.0</span>,
+    top_p=<span class="param">0.95</span>,
+    extra_body={<span class="string">"top_k"</span>: <span class="param">20</span>},  <span class="comment"># 不传 enable_thinking=false → 默认 thinking</span>
+)
+
+<span class="comment"># 有工具调用时（OpenCode 场景）</span>
+response = client.chat.completions.create(
+    model=<span class="string">"qwen3.5-27b"</span>,
+    messages=[{<span class="string">"role"</span>: <span class="string">"user"</span>, <span class="string">"content"</span>: <span class="string">"北京的天气怎么样？"</span>}],
+    tools=[{
+        <span class="string">"type"</span>: <span class="string">"function"</span>,
+        <span class="string">"function"</span>: {
+            <span class="string">"name"</span>: <span class="string">"get_weather"</span>,
+            <span class="string">"parameters"</span>: {
+                <span class="string">"type"</span>: <span class="string">"object"</span>,
+                <span class="string">"properties"</span>: {
+                    <span class="string">"location"</span>: {<span class="string">"type"</span>: <span class="string">"string"</span>}
+                },
+                <span class="string">"required"</span>: [<span class="string">"location"</span>]
+            }
+        }
+    }],
+    tool_choice=<span class="string">"auto"</span>,
+)</code></pre>
+</div>
+
+<!-- ============= LESSONS LEARNED ============= -->
+<div class="section">
+  <h2><span class="icon">💡</span> 经验总结</h2>
+  <ol>
+    <li><strong>Thinking 模型 ≠ 普通指令模型</strong> — Qwen3.6 默认 thinking 模式，推理内容会 restate prompt，容易误判为"重复"。客户端必须能处理 <code>reasoning</code> / <code>content</code> 分字段输出的格式。</li>
+    <li><strong>看官方文档，不要只看社区配置</strong> — vLLM 的 <code>--tool-call-parser</code>、<code>--reasoning-parser</code>、<code>--speculative-config</code> 都是模型架构特定的。Qwen3.6 的 HuggingFace README 明确写着这些参数。</li>
+    <li><strong>Speculative Decoding 是双刃剑</strong> — MTP 能提速但稳定性可能下降。对于生产环境，优先确保正确性再考虑优化。</li>
+    <li><strong>长文本测试不可跳过</strong> — 很多问题只在 &gt;512 tokens 的长生成中暴露（如重复循环）。短文本测试全部通过 ≠ 系统可用。</li>
+    <li><strong>vLLM 源码注释了参数</strong> — <code>vllm/config/speculative.py</code> 第 512 行明确写着 <code>if self.method in get_args(MTPModelTypes) and self.method != "mtp":</code>，通用 <code>mtp</code> 方法被排除在自动检测之外。</li>
+  </ol>
+</div>
+
+<!-- ============= QUICK START ============= -->
+<div class="section">
+  <h2><span class="icon">🚀</span> 一键重启</h2>
+  <pre><code><span class="comment">#!/usr/bin/env bash</span>
+
+<span class="comment"># 停旧进程</span>
+pkill -f <span class="string">"vllm serve"</span>
+sleep 3
+
+<span class="comment"># 启动（无 speculative decoding，128K context）</span>
+nohup /home/xuefeiz2/3rd/vllm/.venv/bin/python3 \
+    /home/xuefeiz2/3rd/vllm/.venv/bin/vllm serve \
+    /home/xuefeiz2/models/Qwen3.6-27B \
+    --served-model-name qwen3.5-27b \
+    --dtype bfloat16 \
+    --kv-cache-dtype fp8 \
+    --max-model-len 131072 \
+    --gpu-memory-utilization 0.90 \
+    --max-num-seqs 16 \
+    --enable-chunked-prefill \
+    --enable-prefix-caching \
+    --trust-remote-code \
+    --reasoning-parser qwen3 \
+    --enable-auto-tool-choice \
+    --tool-call-parser qwen3_coder \
+    --host 0.0.0.0 --port 8000 \
+    &gt; ~/vllm.log 2&gt;&amp;1 &amp;
+
+<span class="keyword">echo</span> <span class="string">"PID: $!"</span>
+
+<span class="comment"># 等待就绪</span>
+<span class="keyword">until</span> curl -s http://localhost:8000/health &gt; /dev/null; <span class="keyword">do</span>
+    sleep 5
+<span class="keyword">done</span>
+<span class="keyword">echo</span> <span class="string">"Server ready"</span></code></pre>
+</div>
+
+<!-- ============= REFERENCE ============= -->
+<div class="section">
+  <h2><span class="icon">📚</span> 参考链接</h2>
+  <ul>
+    <li><a href="https://huggingface.co/Qwen/Qwen3.6-27B" style="color:var(--accent)">Qwen3.6-27B HuggingFace 模型卡</a> — 含官方 vLLM 部署参数</li>
+    <li><a href="https://github.com/QwenLM/Qwen3.6" style="color:var(--accent)">QwenLM/Qwen3.6 GitHub</a> — 官方仓库</li>
+    <li><a href="https://docs.vllm.ai/en/latest/" style="color:var(--accent)">vLLM 文档</a> — 推理引擎文档</li>
+    <li><code>vllm/config/speculative.py</code> — MTP 配置逻辑源码</li>
+    <li><code>~/models/Qwen3.6-27B/DEPLOY_VLLM.md</code> — 本机部署指南（需更新）</li>
+  </ul>
+</div>
+
+<div class="footer">
+  Generated by Sisyphus · vLLM learning journal · 2026-05-09
+</div>
+
+</div>
+</body>
+</html>
